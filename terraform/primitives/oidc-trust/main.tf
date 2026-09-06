@@ -2,7 +2,8 @@
 #terraform apply \
 #  -var="github_org=teewei2000" \
 #  -var="github_org_id=75324270" \
-#  -var="github_repo=cgep-labs"
+#  -var="github_repo=cgep-labs" \
+#  -var="github_repo_id=1350680007"
 
 terraform {
   required_version = ">= 1.6"
@@ -16,6 +17,8 @@ provider "aws" { region = "us-east-1" }
 variable "github_org"  { type = string }
 variable "github_org_id"  { type = string }
 variable "github_repo" { type = string }
+variable "github_repo_id" { type = string }
+
 
 resource "aws_iam_openid_connect_provider" "github" {
   url             = "https://token.actions.githubusercontent.com"
@@ -34,7 +37,7 @@ resource "aws_iam_role" "grc_gate" {
       Action    = "sts:AssumeRoleWithWebIdentity"
       Condition = {
         StringEquals = { "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com" }
-        StringLike   = { "token.actions.githubusercontent.com:sub" = "repo:${var.github_org}@${var.github_org_id}/${var.github_repo}:*" }
+        StringLike   = { "token.actions.githubusercontent.com:sub" = "repo:${var.github_org}@${var.github_org_id}/${var.github_repo}@{var.github_repo_id}:*" }
       }
     }]
   })

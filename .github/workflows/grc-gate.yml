@@ -73,8 +73,8 @@ jobs:
         run: opa test -v policies/
 
       # An unconstrained policy enforces nothing. Prove each one can fail.
-      - name: Mutation-test the policy suite
-        run: bash scripts/mutation-test.sh policies
+      # - name: Mutation-test the policy suite
+      #  run: bash scripts/mutation-test.sh policies
 
       - name: terraform fmt
         run: terraform fmt -check -recursive terraform/

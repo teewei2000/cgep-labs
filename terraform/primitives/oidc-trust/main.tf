@@ -14,8 +14,8 @@ terraform {
 
 provider "aws" { region = "us-east-1" }
 
-variable "github_org"  { type = string }
-variable "github_org_id"  { type = string }
+variable "github_org" { type = string }
+variable "github_org_id" { type = string }
 variable "github_repo" { type = string }
 variable "github_repo_id" { type = string }
 

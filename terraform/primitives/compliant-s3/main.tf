@@ -40,6 +40,17 @@ locals {
 # arn = arn:aws:s3:::my-primary-bucket
 resource "aws_s3_bucket" "primary" {
   bucket = local.primary_name
+
+  server_side_encryption_configuration {
+    rule {
+      apply_server_side_encryption_by_default {
+        sse_algorithm     = "aws:kms"
+        kms_master_key_id = aws_kms_key.bucket.arn
+      }
+
+      bucket_key_enabled = true
+    }
+  }
 }
 
 # terraform/primitives/compliant-s3/main.tf (continued)
@@ -47,23 +58,28 @@ resource "aws_s3_bucket" "primary" {
 # SC-28: Protection of information at rest.
 # AES-256 keeps this lab simple. The commented block below shows how you'd
 # switch to KMS-managed keys, covered in a later lab.
-resource "aws_s3_bucket_server_side_encryption_configuration" "primary" {
-  # bucket = aws_s3_bucket.primary.id
-  # rule {
-  #   apply_server_side_encryption_by_default {
-  #     sse_algorithm = "AES256"
-  #   }
-  # }
-
-  # KMS teaser:
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm     = "aws:kms"
-      kms_master_key_id = aws_kms_key.bucket.arn
-    }
-    bucket_key_enabled = true
-  }
+resource "aws_kms_key" "bucket" {
+  description         = "KMS key for ${var.project_name} ${var.environment} S3 bucket"
+  enable_key_rotation = true
 }
+
+#resource "aws_s3_bucket_server_side_encryption_configuration" "primary" {
+# bucket = aws_s3_bucket.primary.id
+# rule {
+#   apply_server_side_encryption_by_default {
+#     sse_algorithm = "AES256"
+#   }
+# }
+
+# KMS teaser:
+#  rule {
+#    apply_server_side_encryption_by_default {
+#      sse_algorithm     = "aws:kms"
+#      kms_master_key_id = aws_kms_key.bucket.arn
+#    }
+#    bucket_key_enabled = true
+#  }
+#}
 
 # CM-6: Versioning preserves prior object states for recovery and audit.
 resource "aws_s3_bucket_versioning" "primary" {
@@ -103,7 +119,7 @@ resource "aws_s3_bucket_acl" "log" {
   depends_on = [aws_s3_bucket_ownership_controls.log]
   bucket     = aws_s3_bucket.log.id
   # allows the S3 logging service to deliver access logs to the bucket.
-  acl        = "log-delivery-write"
+  acl = "log-delivery-write"
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "log" {

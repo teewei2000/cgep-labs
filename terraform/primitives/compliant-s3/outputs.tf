@@ -1,7 +1,7 @@
 # terraform/primitives/compliant-s3/outputs.tf
 # After Terraform creates/configures everything, what information do I want to expose to whoever is using this module?
-output "bucket_arn"     { value = aws_s3_bucket.primary.arn }
-output "bucket_name"    { value = aws_s3_bucket.primary.id }
+output "bucket_arn" { value = aws_s3_bucket.primary.arn }
+output "bucket_name" { value = aws_s3_bucket.primary.id }
 output "log_bucket_arn" { value = aws_s3_bucket.log.arn }
 
 # Look at the encryption configuration of the primary bucket and return the encryption algorithm being used.

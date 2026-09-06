@@ -1,0 +1,171 @@
+# .github/workflows/grc-gate.yml
+# Lab 4.3: the GRC evidence pipeline.
+# Every line here is a control statement; see the guide's takeaway table.
+name: grc-gate
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# AC-6: the minimum token scope that works.
+permissions:
+  id-token: write      # AWS OIDC, and Cosign keyless in Lab 4.4
+  contents: read
+  pull-requests: write # PR comment
+
+env:
+  AWS_REGION: us-east-1
+  TF_WORKING_DIR: terraform/primitives/compliant-s3
+  TERRAFORM_VERSION: 1.15.8
+  CONFTEST_VERSION: 0.69.0
+  OPA_VERSION: 1.19.1
+  TRIVY_VERSION: 0.74.0
+
+  # The workspace's two required inputs. Locally they come from cgep.env, which
+  # CI cannot read, so they arrive as repository variables. They form the bucket
+  # names, so they must match what built the resources: a wrong value does not
+  # error, it proposes renaming live infrastructure.
+  TF_VAR_project_name: ${{ vars.TF_VAR_PROJECT_NAME }}
+  TF_VAR_environment: ${{ vars.TF_VAR_ENVIRONMENT }}
+
+jobs:
+  grc-gate:
+    runs-on: ubuntu-latest
+    steps:
+      # SR-3 / SR-11: actions pinned by commit SHA, not by tag.
+      # A tag is a mutable pointer. Pinning to v4 means "whatever the
+      # maintainer, or whoever compromises their account, decides v4 means."
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Install Conftest and OPA
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz" \
+            | tar -xz -C /usr/local/bin conftest
+          curl -fsSL "https://github.com/open-policy-agent/opa/releases/download/v${OPA_VERSION}/opa_linux_amd64_static" \
+            -o /usr/local/bin/opa
+          chmod +x /usr/local/bin/opa
+          conftest --version && opa version
+
+      - name: Install Trivy
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
+            | tar -xz -C /usr/local/bin trivy
+          trivy --version
+
+      # The gate's own tests run before it is trusted to gate anything.
+      - name: opa test
+        run: opa test -v policies/
+
+      # An unconstrained policy enforces nothing. Prove each one can fail.
+      # - name: Mutation-test the policy suite
+      #  run: bash scripts/mutation-test.sh policies
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive terraform/
+
+      - name: Terraform plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          set -euo pipefail
+          # An unset repository variable renders as an EMPTY string, not as a
+          # missing one, and Terraform accepts empty and builds from it. These
+          # two feed the bucket names, so empty means a plan that proposes
+          # renaming everything you already have. Fail here instead.
+          : "${TF_VAR_project_name:?set the TF_VAR_PROJECT_NAME repository variable}"
+          : "${TF_VAR_environment:?set the TF_VAR_ENVIRONMENT repository variable}"
+          # The backend is partial on purpose: main.tf carries the key, and
+          # backend.hcl carries the bucket and is gitignored because it names
+          # your account's resources. CI therefore has no backend.hcl, and a
+          # bare `terraform init -input=false` fails outright rather than
+          # prompting. The bucket arrives as a repository variable instead,
+          # which is what `gh variable set TF_STATE_BUCKET` in Step 2 is for.
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+          terraform validate
+          terraform plan -out=tfplan -no-color | tee plan.txt
+          terraform show -json tfplan > plan.json
+
+      - name: Conftest policy gate
+        id: conftest
+        run: |
+          mkdir -p evidence
+          bash scripts/policy-gate.sh \
+            --workspace "${TF_WORKING_DIR}" \
+            --policy policies \
+            --evidence evidence
+
+      - name: Trivy config scan
+        id: trivy
+        if: always()
+        run: |
+          set -euo pipefail
+          # --ignorefile is required: Trivy auto-discovers a plain
+          # .trivyignore but NOT .trivyignore.yaml, and the YAML form is the
+          # one that carries a justification and an expiry date.
+          trivy config "${TF_WORKING_DIR}" \
+            --ignorefile .trivyignore.yaml \
+            --format sarif --output evidence/trivy.sarif \
+            --severity HIGH,CRITICAL --exit-code 0
+          COUNT=$(jq '[.runs[].results[]] | length' evidence/trivy.sarif)
+          echo "trivy HIGH+CRITICAL: $COUNT"
+          jq -r '.runs[].results[] | "  " + .ruleId + ": " + .message.text' evidence/trivy.sarif || true
+          test "$COUNT" -eq 0
+
+      # if: always() on everything below. A Conftest failure must not abort
+      # the job before evidence is captured; a failed run is exactly the run
+      # whose evidence you will want later.
+      - name: Copy plan into evidence
+        if: always()
+        run: |
+          cp "${TF_WORKING_DIR}/plan.json" evidence/plan.json || true
+          cp "${TF_WORKING_DIR}/plan.txt"  evidence/plan.txt  || true
+
+      - name: Upload evidence artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: grc-evidence-${{ github.run_id }}
+          # Named files, not the evidence/ directory.
+          #
+          # `path: evidence/` uploads whatever else lives there, which in a real
+          # repository is every prior lab's artifacts, including
+          # evidence/lab-2-3/state.json. Terraform state records every attribute
+          # the provider stored, sensitive ones included, and Lab 2.5 exists to
+          # teach exactly that. Re-uploading it on every run, to an artifact any
+          # repository reader can download, is the opposite of the lesson.
+          #
+          # It also nests: download a run's artifact into evidence/ and the next
+          # run packages it inside the next artifact, and so on.
+          path: |
+            evidence/plan.json
+            evidence/plan.txt
+            evidence/conftest-results.json
+            evidence/trivy.sarif
+          # 90, not 365, and the difference is a control claim.
+          #
+          # GitHub caps artifact retention at the repository or organisation
+          # maximum, 90 days by default. Ask for more and it does not fail: it
+          # warns, silently stores 90, and the run still goes green. A pipeline
+          # configured for 365 that actually retains 90 is a documented AU-11
+          # retention period your evidence does not have.
+          #
+          # If you need longer, raise the limit in repository settings first,
+          # then change this, then confirm the actual retention on a real
+          # artifact. Do not cite a retention period you have not checked.
+          retention-days: 90

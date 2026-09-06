@@ -103,7 +103,7 @@ resource "aws_s3_bucket_acl" "log" {
   depends_on = [aws_s3_bucket_ownership_controls.log]
   bucket     = aws_s3_bucket.log.id
   # allows the S3 logging service to deliver access logs to the bucket.
-  acl        = "log-delivery-write"
+  acl = "log-delivery-write"
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "log" {

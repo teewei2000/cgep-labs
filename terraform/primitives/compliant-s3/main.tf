@@ -32,6 +32,16 @@ locals {
   log_name         = "${var.project_name}-${var.environment}-logs-${local.effective_suffix}"
 }
 
+######################################################################
+# KMS key used to encrypt the evidence bucket. Customer-managed CMK
+# satisfies SC-28; required tags come from provider default_tags.
+######################################################################
+resource "aws_kms_key" "primary" {
+  description             = "CMK for cgep-pipeline-demo evidence bucket"
+  deletion_window_in_days = 7
+  enable_key_rotation     = true
+}
+
 resource "aws_s3_bucket" "primary" {
   bucket = local.primary_name
 }

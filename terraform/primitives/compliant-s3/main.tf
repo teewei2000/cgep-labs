@@ -32,6 +32,16 @@ locals {
   log_name         = "${var.project_name}-${var.environment}-logs-${local.effective_suffix}"
 }
 
+######################################################################
+# KMS key used to encrypt the evidence bucket. Customer-managed CMK
+# satisfies SC-28; required tags come from provider default_tags.
+######################################################################
+resource "aws_kms_key" "primary" {
+  description             = "CMK for cgep-pipeline-demo evidence bucket"
+  deletion_window_in_days = 7
+  enable_key_rotation     = true
+}
+
 resource "aws_s3_bucket" "primary" {
   bucket = local.primary_name
 }
@@ -43,20 +53,20 @@ resource "aws_s3_bucket" "primary" {
 # switch to KMS-managed keys, covered in a later lab.
 resource "aws_s3_bucket_server_side_encryption_configuration" "primary" {
   bucket = aws_s3_bucket.primary.id
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
-    }
-  }
+  #rule {
+  #  apply_server_side_encryption_by_default {
+  #    sse_algorithm = "AES256"
+  #  }
+  #}
 
   # KMS teaser:
-  # rule {
-  #   apply_server_side_encryption_by_default {
-  #     sse_algorithm     = "aws:kms"
-  #     kms_master_key_id = aws_kms_key.bucket.arn
-  #   }
-  #   bucket_key_enabled = true
-  # }
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.primary.arn
+    }
+    bucket_key_enabled = true
+  }
 }
 
 # CM-6: Versioning preserves prior object states for recovery and audit.

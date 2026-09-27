@@ -32,6 +32,12 @@ locals {
   log_name         = "${var.project_name}-${var.environment}-logs-${local.effective_suffix}"
 }
 
+resource "aws_kms_key" "primary" {
+  description             = "CMK for cgep-pipeline-demo evidence bucket"
+  deletion_window_in_days = 7
+  enable_key_rotation     = true
+}
+
 resource "aws_s3_bucket" "primary" {
   bucket = local.primary_name
 }
@@ -43,20 +49,14 @@ resource "aws_s3_bucket" "primary" {
 # switch to KMS-managed keys, covered in a later lab.
 resource "aws_s3_bucket_server_side_encryption_configuration" "primary" {
   bucket = aws_s3_bucket.primary.id
+  # KMS teaser:
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.primary.arn
     }
+    bucket_key_enabled = true
   }
-
-  # KMS teaser:
-  # rule {
-  #   apply_server_side_encryption_by_default {
-  #     sse_algorithm     = "aws:kms"
-  #     kms_master_key_id = aws_kms_key.bucket.arn
-  #   }
-  #   bucket_key_enabled = true
-  # }
 }
 
 # CM-6: Versioning preserves prior object states for recovery and audit.
@@ -70,7 +70,7 @@ resource "aws_s3_bucket_versioning" "primary" {
 # AC-3: Access control, explicit deny on every public access vector.
 resource "aws_s3_bucket_public_access_block" "primary" {
   bucket                  = aws_s3_bucket.primary.id
-  block_public_acls       = false ## edit
+  block_public_acls       = true
   block_public_policy     = true
   ignore_public_acls      = true
   restrict_public_buckets = true
